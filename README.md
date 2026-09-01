@@ -1,3 +1,9 @@
+<div align="center">
+
+<img src="assets/logo-banner.svg" alt="mcp-cst-studio: CST Studio Suite automation for antenna, RF and PCB" width="100%"/>
+
+</div>
+
 # MCP Server for CST Studio Suite
 
 A Model Context Protocol (MCP) server providing AI-driven access to [CST Studio Suite](https://www.3ds.com/products/simulia/cst-studio-suite) for antenna design, RF/microwave simulation, and PCB layout.
