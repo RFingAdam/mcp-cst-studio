@@ -5,6 +5,21 @@ All notable changes to **mcp-cst-studio** are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+- `cst_run_simulation_async` starts `model3d.run_solver()` on a background thread in connected mode and returns immediately.
+- `cst_get_simulation_status` polls the solver and the log tail. It no longer injects a VBA `MsgBox`.
+- `cst_get_result_curve` returns a decimated numeric curve plus a reflection summary (resonance, bandwidth, Zin, verdict).
+- `cst_list_results` uses the Python result tree in connected mode.
+- `cst_farfield_sample` samples the farfield calculator on a theta cut.
+- `cst_tune_step` runs one StoreParameter → DeleteResults → Rebuild → solve → S-parameter verdict.
+- `docs/RF_ENGINEER_LOOP.md` describes the agent design loop.
+
+### Fixed
+- Windows setup docs pointed at `LinuxAMD64`. The library folder on Windows is `AMD64`, and the supported link is the one-time command in CST Help, not `PYTHONPATH` alone.
+- Connected-mode test docs used `solver_type="time_domain"` and `cst_configure_time_domain`. The tool enum value is `"Time Domain"` and the tool name is `cst_configure_time_domain_solver`.
+
 ## [0.2.0]: 2026-05-13
 
 ### Changed

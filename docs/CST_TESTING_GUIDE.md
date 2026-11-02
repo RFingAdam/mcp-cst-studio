@@ -24,8 +24,8 @@ CST ships its own Python libraries. Add them to your Python path:
 # Find your CST installation (adjust version year)
 $CST_PATH = "C:\Program Files\CST Studio Suite 2026"
 
-# The Python libraries are here:
-$env:PYTHONPATH = "$CST_PATH\LinuxAMD64\python_cst_libraries;$env:PYTHONPATH"
+# The Windows libraries live here (LinuxAMD64 is the Linux installer layout):
+$env:PYTHONPATH = "$CST_PATH\AMD64\python_cst_libraries;$env:PYTHONPATH"
 
 # Verify CST is importable
 python -c "import cst.interface; print('OK')"
@@ -33,8 +33,10 @@ python -c "import cst.interface; print('OK')"
 
 If `cst.interface` fails to import, check:
 - CST is installed and licensed
-- The `python_cst_libraries` path exists in your CST installation
-- Your Python version matches what CST supports (usually 3.10-3.12)
+- You ran the one-time link command from Help → Automation and Scripting → Python
+  (PYTHONPATH alone is not the supported setup)
+- The folder `AMD64\python_cst_libraries` exists in your CST installation
+- Your Python version matches CST's (CST 2026 ships Python 3.12)
 
 ### 3. Environment Variables
 
@@ -193,14 +195,20 @@ Test 6.2: Plane wave: REGRESSION for issue #24
 
 ```
 Test 7.1: Configure solver
-  Tool: cst_configure_time_domain
-  Args: accuracy=-40, max_pulses=20
+  Tool: cst_configure_time_domain_solver
+  Args: accuracy=-40, max_time_steps=20000
   Expected: Solver settings applied
 
 Test 7.2: Run simulation
   Tool: cst_run_simulation
-  Args: solver_type="time_domain"
+  Args: solver_type="Time Domain"
   Expected: Simulation starts and completes
+
+Test 7.2b: Non-blocking run
+  Tool: cst_run_simulation_async
+  Args: {}
+  Expected: returns immediately with status started. Then cst_get_simulation_status
+  returns solver.status running or completed and does not open a MsgBox.
 
 Test 7.3: Get S-parameters
   Tool: cst_get_s_parameters

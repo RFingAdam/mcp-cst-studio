@@ -8,7 +8,7 @@ from mcp.server import Server
 from mcp.types import TextContent, Tool
 
 from mcp_cst_studio.cst_client import CSTClient
-from mcp_cst_studio.vba_builder import VBABuilder, VBAScript
+from mcp_cst_studio.vba_builder import VBABuilder
 
 _VALID_SOLVER_TYPES = [
     "Time Domain",
@@ -46,8 +46,11 @@ TOOLS: list[Tool] = [
         name="cst_run_simulation_async",
         description=(
             "Start a CST simulation asynchronously (non-blocking). "
-            "The simulation launches and control returns immediately. "
-            "Use cst_get_simulation_status to monitor progress."
+            "In connected mode this calls model3d.run_solver() on a background "
+            "thread and returns immediately. It does not open a MsgBox and does "
+            "not add Solver.Start to the history list. The solver type argument "
+            "is ignored: configure the solver first. Poll cst_get_simulation_status. "
+            "In offline mode a VBA script is returned."
         ),
         input_schema={
             "type": "object",
@@ -60,9 +63,9 @@ TOOLS: list[Tool] = [
     Tool(
         name="cst_get_simulation_status",
         description=(
-            "Check the status and progress of a running CST simulation. "
-            "Returns information such as whether a simulation is running, "
-            "progress percentage, mesh cell count, and current time step."
+            "Check whether a CST simulation is running. In connected mode this "
+            "polls model3d.is_solver_running() and the solver log tail. It never "
+            "opens a MsgBox. Returns idle, running, completed, or error."
         ),
         input_schema={
             "type": "object",
@@ -199,6 +202,17 @@ def _handle_run_simulation(
             )
         ]
 
+    if async_mode and client.connected:
+        result = client.start_solver_async()
+        result["solver_type"] = solver_type or "current"
+        result["mode"] = "async"
+        if solver_type is not None:
+            result["solver_type_note"] = (
+                "Connected async mode runs the solver that is already configured. "
+                "Call cst_configure_time_domain_solver (or the matching solver tool) first."
+            )
+        return [TextContent(type="text", text=json.dumps(result, indent=2))]
+
     vba_code = _build_solver_start_vba(solver_type)
     result = client.execute_vba(vba_code)
 
@@ -221,24 +235,7 @@ def _handle_run_simulation(
 def _handle_get_status(client: CSTClient) -> list[TextContent]:
     """Handle cst_get_simulation_status."""
     if client.connected:
-        # In connected mode, query the solver for status information
-        script = VBAScript()
-        script.add_comment("Query simulation status")
-        # CST exposes solver status through VBA macros
-        status_vba = (
-            'Dim running As Boolean\n'
-            'Dim progress As Double\n'
-            'running = Solver.IsRunning\n'
-            'progress = Solver.GetProgress\n'
-            'SelectTreeItem "Design Parameters"\n'
-            'MsgBox "Running: " & running & vbCrLf & '
-            '"Progress: " & progress & "%"'
-        )
-        script.add_raw(status_vba)
-        result = client.execute_vba(script.build())
-        result["description"] = (
-            "Queried CST solver status. Check 'result' field for details."
-        )
+        result = client.solver_session_status()
         return [TextContent(type="text", text=json.dumps(result, indent=2))]
 
     # Offline mode: provide guidance

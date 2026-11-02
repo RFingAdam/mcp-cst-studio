@@ -21,7 +21,9 @@
 | `tools/__init__.py` | ToolRegistry aggregator, register_all_tools() |
 | `data/` | JSON material databases, antenna templates, VBA reference |
 
-## Tool Categories (170 tools)
+## Tool Categories (173 tools)
+
+The README table is the catalog. This list is the module map.
 
 | Module | Tools | Description |
 |--------|-------|-------------|
@@ -34,10 +36,11 @@
 | boundaries.py | 4 | Boundary conditions, background, symmetry, frequency range |
 | mesh.py | 5 | Mesh type, density, refinement, adaptive, info |
 | solvers.py | 5 | Time domain, frequency domain, eigenmode, integral equation, info |
-| simulation.py | 6 | Run, run_async, status, pause, resume, stop |
-| results.py | 10 | S-params, farfield, field monitor, impedance, VSWR, gain, efficiency |
+| simulation.py | 6 | Run (blocking VBA or native), run_async (background `run_solver`), status (no MsgBox), pause, resume, stop |
+| results.py | 24 | S-params, farfield, monitors, numeric curves, farfield calculator cut |
+| parameters.py | 11 | Set, get, list, delete, sweep, optimizers |
+| optimization.py | 4 | Evaluate, impedance guidance, Nelder-Mead, one tune step |
 | import_export.py | 5 | CAD import/export, Touchstone, farfield |
-| parameters.py | 6 | Set, get, list, delete, sweep, optimize |
 | antenna_templates.py | 13 | Parametric designs: patch, dipole, monopole, horn, Yagi, helix, etc. |
 | pcb.py | 6 | Stackup, traces, vias, ground planes, Gerber import |
 | vba.py | 3 | Raw VBA execution, help reference, object listing |

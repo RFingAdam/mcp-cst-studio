@@ -4,11 +4,13 @@ from __future__ import annotations
 
 import logging
 import os
+import threading
 import time
 from typing import Any
 
 from mcp_cst_studio.config import CSTConfig
 from mcp_cst_studio.dialog_handler import DialogWatcher, dismiss_cst_dialogs, find_cst_dialogs
+from mcp_cst_studio.rf_metrics import extract_curve, summarize_reflection
 
 logger = logging.getLogger(__name__)
 
@@ -33,6 +35,9 @@ class CSTClient:
         self._de: Any = None  # cst.interface.DesignEnvironment
         self._project: Any = None  # Active project handle
         self._project_path: str | None = None
+        self._solver_lock = threading.Lock()
+        self._solver_thread: threading.Thread | None = None
+        self._solver_state: dict[str, Any] = {"status": "idle"}
 
     @property
     def connected(self) -> bool:
@@ -343,6 +348,307 @@ class CSTClient:
 
         return {"status": "offline", "message": "Solver requires connected mode."}
 
+    def start_solver_async(self) -> dict:
+        """Start ``model3d.run_solver()`` on a daemon thread and return immediately.
+
+        Does not push ``Solver.Start`` into the history list and does not
+        open a VBA ``MsgBox``. Poll :meth:`solver_session_status`.
+        """
+        if not self.connected or self._project is None:
+            return {"status": "offline", "message": "Solver requires connected mode."}
+
+        if self._solver_thread is not None and self._solver_thread.is_alive():
+            return {"status": "already_running", "message": "Solver thread is still running."}
+
+        if self.is_solver_running():
+            return {
+                "status": "already_running",
+                "message": "CST reports a solver is already running.",
+            }
+
+        def _target() -> None:
+            with self._solver_lock:
+                self._solver_state = {"status": "running", "started_at": time.time()}
+            try:
+                result = self._project.model3d.run_solver()
+                with self._solver_lock:
+                    self._solver_state = {
+                        "status": "completed",
+                        "result": str(result) if result else "ok",
+                        "started_at": self._solver_state.get("started_at"),
+                        "finished_at": time.time(),
+                    }
+            except Exception as exc:
+                with self._solver_lock:
+                    self._solver_state = {
+                        "status": "error",
+                        "message": str(exc),
+                        "started_at": self._solver_state.get("started_at"),
+                        "finished_at": time.time(),
+                    }
+
+        self._solver_thread = threading.Thread(
+            target=_target, name="cst-solver", daemon=True
+        )
+        self._solver_thread.start()
+        return {
+            "status": "started",
+            "mode": "async",
+            "message": "Solver started in the background. Poll cst_get_simulation_status.",
+        }
+
+    def solver_session_status(self) -> dict:
+        """Non-blocking solver status plus a short log tail. Never shows a dialog."""
+        if not self.connected or self._project is None:
+            return {"status": "offline", "message": "Status requires connected mode."}
+
+        with self._solver_lock:
+            state = dict(self._solver_state)
+        thread_alive = self._solver_thread is not None and self._solver_thread.is_alive()
+        api_running = self.is_solver_running()
+        if thread_alive or api_running:
+            state["status"] = "running"
+        elif state.get("status") == "running":
+            state["status"] = "completed"
+        state["thread_alive"] = thread_alive
+        state["api_solver_running"] = api_running
+
+        logs = self.read_project_messages()
+        tail = logs.get("latest_log")
+        if isinstance(tail, str) and tail:
+            state["log_tail"] = tail[-1500:]
+            state["log_file"] = logs.get("latest_log_file")
+        return {"status": "ok", "solver": state}
+
+    def list_result_tree(self, root: str | None = None, limit: int = 200) -> dict:
+        """List result-tree paths via the Python API, not a VBA MsgBox."""
+        if not self.connected or self._project is None:
+            return {
+                "status": "offline",
+                "message": "Result tree listing requires connected mode.",
+            }
+
+        items: list[str] = []
+        errors: list[str] = []
+        try:
+            raw = self._project.model3d.get_tree_items()
+            items.extend(_flatten_tree(raw))
+        except Exception as exc:
+            errors.append(f"model3d.get_tree_items: {exc}")
+
+        if not items and self._project_path:
+            try:
+                import cst.results as cst_results  # type: ignore[import-not-found]
+
+                project_file = _open_project_file(cst_results, self._project_path)
+                module = project_file.get_3d()
+                if hasattr(module, "get_tree_items"):
+                    items.extend(_flatten_tree(module.get_tree_items()))
+            except Exception as exc:
+                errors.append(f"cst.results: {exc}")
+
+        if root:
+            needle = root.replace("/", "\\")
+            items = [item for item in items if needle in item]
+        # Preserve order, drop duplicates.
+        seen: set[str] = set()
+        unique: list[str] = []
+        for item in items:
+            if item not in seen:
+                seen.add(item)
+                unique.append(item)
+        truncated = unique[: max(limit, 0)]
+        return {
+            "status": "ok" if truncated else "empty",
+            "root": root,
+            "count": len(unique),
+            "items": truncated,
+            "errors": errors,
+        }
+
+    def get_result(
+        self,
+        tree_path: str,
+        run_id: str | int | None = None,
+        max_points: int = 201,
+        f0: float | None = None,
+    ) -> dict:
+        """Get a result-tree item as a decimated curve plus an RF summary.
+
+        ``data`` stays a short text preview for older callers. Numeric samples
+        are under ``curve``. Reflection traces also get ``summary``.
+        """
+        if self.connected and self._project is not None:
+            if not self._project_path:
+                return {
+                    "status": "error",
+                    "message": "No project path is set; cst.results needs the .cst file.",
+                    "tree_path": tree_path,
+                }
+            try:
+                import cst.results as cst_results  # type: ignore[import-not-found]
+            except ImportError as exc:
+                return {
+                    "status": "error",
+                    "message": f"cst.results is not importable: {exc}",
+                    "tree_path": tree_path,
+                }
+            try:
+                project_file = _open_project_file(cst_results, self._project_path)
+                module = project_file.get_3d()
+                item = _tree_item(module, tree_path, run_id)
+                curve = extract_curve(item, max_points=max_points)
+                payload: dict[str, Any] = {
+                    "status": "ok",
+                    "tree_path": tree_path,
+                    "data": _brief(item),
+                }
+                if run_id is not None:
+                    payload["run_id"] = run_id
+                if curve:
+                    payload["curve"] = curve
+                    if _looks_like_reflection(tree_path):
+                        payload["summary"] = summarize_reflection(
+                            curve["x"],
+                            curve["y_re"],
+                            curve.get("y_im"),
+                            f0=f0,
+                        )
+                return payload
+            except Exception as e:
+                return {"status": "error", "message": str(e), "tree_path": tree_path}
+
+        return {
+            "status": "offline",
+            "tree_path": tree_path,
+            "message": "Result retrieval requires connected mode with a completed simulation.",
+        }
+
+    def sample_farfield(
+        self,
+        *,
+        frequency_hz: float,
+        theta_deg: list[float],
+        phi_deg: list[float],
+        quantity: str = "realized gain",
+        component: str = "Abs",
+        radius_m: float = 1.0,
+        tree_path: str | None = None,
+    ) -> dict:
+        """Sample the farfield calculator at explicit angles.
+
+        Follows the CST Python farfield workflow: reset, add evaluation
+        points, calculate, get the list. Returns an error naming the missing
+        attribute when this CST build does not expose the calculator.
+        """
+        if not self.connected or self._project is None:
+            return {
+                "status": "offline",
+                "message": (
+                    "Farfield sampling requires connected mode. "
+                    "The live call is model3d farfield calculator: "
+                    "reset, add_list_evaluation_points(theta, phi, radius_m, "
+                    "'spherical', frequency_hz), calculate_list, get_list."
+                ),
+                "quantity": quantity,
+                "frequency_hz": frequency_hz,
+            }
+        calc = _lookup_farfield_calculator(self._project.model3d)
+        if calc is None:
+            return {
+                "status": "error",
+                "message": (
+                    "model3d has no farfield calculator. Looked for "
+                    "farfield_calculator, FarfieldCalculator, and "
+                    "get_farfield_calculator. Define a farfield monitor and "
+                    "use cst_get_farfield, or confirm this CST version exposes "
+                    "the Python farfield calculator."
+                ),
+            }
+        try:
+            reset = getattr(calc, "reset", None) or getattr(calc, "Reset", None)
+            if callable(reset):
+                reset()
+            add = getattr(calc, "add_list_evaluation_points", None) or getattr(
+                calc, "AddListEvaluationPoints", None
+            )
+            if not callable(add):
+                return {
+                    "status": "error",
+                    "message": "Farfield calculator has no add_list_evaluation_points.",
+                }
+            try:
+                add(theta_deg, phi_deg, radius_m, "spherical", frequency_hz)
+            except TypeError:
+                add(
+                    theta=theta_deg,
+                    phi=phi_deg,
+                    radius=radius_m,
+                    coordinate_system="spherical",
+                    frequency=frequency_hz,
+                )
+            calculate = getattr(calc, "calculate_list", None) or getattr(
+                calc, "CalculateList", None
+            )
+            if callable(calculate):
+                source = tree_path or ""
+                try:
+                    calculate(source, quantity)
+                except TypeError:
+                    if source:
+                        calculate(source)
+                    else:
+                        calculate()
+            getter = getattr(calc, "get_list", None) or getattr(calc, "GetList", None)
+            if not callable(getter):
+                return {"status": "error", "message": "Farfield calculator has no get_list."}
+            try:
+                raw = getter(quantity, component)
+            except TypeError:
+                raw = getter(quantity)
+            values = [float(v) for v in list(raw)]
+        except Exception as exc:
+            return {"status": "error", "message": str(exc), "quantity": quantity}
+
+        peak = max(values) if values else None
+        return {
+            "status": "ok",
+            "quantity": quantity,
+            "component": component,
+            "frequency_hz": frequency_hz,
+            "radius_m": radius_m,
+            "theta_deg": theta_deg,
+            "phi_deg": phi_deg,
+            "values": values,
+            "peak": peak,
+            "n": len(values),
+        }
+
+    def tune_step(
+        self,
+        params: dict[str, float],
+        port: int = 1,
+        f0: float | None = None,
+        max_points: int = 201,
+    ) -> dict:
+        """One RF iteration: store, delete results, rebuild, solve, read S.
+
+        Blocking. Use this when the agent is ready to wait for a single solve.
+        """
+        solved = self.set_params_rebuild_solve(params, export_path=None, port=port)
+        if solved.get("status") != "ok":
+            return solved
+        tree_path = f"1D Results\\S-Parameters\\S{port},{port}"
+        curve = self.get_result(tree_path, max_points=max_points, f0=f0)
+        return {
+            "status": "ok",
+            "params": params,
+            "port": port,
+            "tree_path": tree_path,
+            "s_parameter": curve,
+            "verdict": (curve.get("summary") or {}).get("verdict"),
+        }
+
     def export_result(self, tree_path: str, filepath: str) -> dict:
         """Export a result tree item to CSV via Python API (no history entry).
 
@@ -396,22 +702,6 @@ class CSTClient:
             "status": "offline",
             "tree_path": tree_path,
             "message": "Result export requires connected mode.",
-        }
-
-    def get_result(self, tree_path: str) -> dict:
-        """Get a result from the CST result tree."""
-        if self.connected and self._project is not None:
-            try:
-                result = cst.results.ProjectFile(self._project_path)
-                data = result.get_3d().get_tree_item(tree_path)
-                return {"status": "ok", "data": str(data)}
-            except Exception as e:
-                return {"status": "error", "message": str(e)}
-
-        return {
-            "status": "offline",
-            "tree_path": tree_path,
-            "message": "Result retrieval requires connected mode with a completed simulation.",
         }
 
     def delete_results(self) -> dict:
@@ -616,3 +906,64 @@ class CSTClient:
                 and CSTClient._dialog_watcher.running
             ),
         }
+
+
+def _flatten_tree(raw: Any, depth: int = 0) -> list[str]:
+    """Turn a CST tree listing into path strings. Ignore arbitrary objects."""
+    if depth > 8 or raw is None:
+        return []
+    if isinstance(raw, str):
+        return [raw]
+    if isinstance(raw, (list, tuple)):
+        out: list[str] = []
+        for item in raw:
+            out.extend(_flatten_tree(item, depth + 1))
+        return out
+    text = getattr(raw, "treepath", None) or getattr(raw, "path", None)
+    if isinstance(text, str):
+        return [text]
+    return []
+
+
+def _open_project_file(cst_results: Any, path: str) -> Any:
+    try:
+        return cst_results.ProjectFile(path, allow_interactive=True)
+    except TypeError:
+        return cst_results.ProjectFile(path)
+
+
+def _tree_item(module: Any, tree_path: str, run_id: str | int | None) -> Any:
+    getter = module.get_tree_item
+    if run_id is None:
+        return getter(tree_path)
+    try:
+        return getter(tree_path, run_id)
+    except TypeError:
+        return getter(tree_path)
+
+
+def _brief(item: Any) -> str:
+    text = str(item)
+    if len(text) > 500:
+        return text[:500] + "..."
+    return text
+
+
+def _looks_like_reflection(tree_path: str) -> bool:
+    lowered = tree_path.lower()
+    return "s-parameter" in lowered or "vswr" in lowered
+
+
+def _lookup_farfield_calculator(model3d: Any) -> Any | None:
+    for name in ("farfield_calculator", "FarfieldCalculator"):
+        obj = getattr(model3d, name, None)
+        if obj is not None:
+            return obj
+    factory = getattr(model3d, "get_farfield_calculator", None)
+    if callable(factory):
+        try:
+            return factory()
+        except Exception:
+            return None
+    return None
+
