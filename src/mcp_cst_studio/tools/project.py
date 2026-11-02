@@ -1,6 +1,6 @@
 """Project management tools for CST Studio MCP server.
 
-Provides 8 tools for creating, opening, saving, closing, inspecting,
+Provides tools for creating, opening, saving, closing, inspecting,
 navigating, exporting, and checking connection status of CST projects.
 """
 
@@ -173,6 +173,38 @@ TOOLS: list[Tool] = [
         input_schema={
             "type": "object",
             "properties": {},
+            "required": [],
+        },
+    ),
+    Tool(
+        name="cst_get_units",
+        description=(
+            "Read the open project's length and frequency units. "
+            "Geometry tools do not convert units. Call this before the first "
+            "brick or cylinder. Offline mode returns unknown units and does "
+            "not assume millimeters."
+        ),
+        input_schema={
+            "type": "object",
+            "properties": {},
+            "required": [],
+        },
+    ),
+    Tool(
+        name="cst_capture_3d_view",
+        description=(
+            "Write a PNG of the current 3D view into CST_WORK_DIR and return "
+            "the path and byte size. The image is not inlined. Does not add a "
+            "history entry. Use it after building geometry and before solving."
+        ),
+        input_schema={
+            "type": "object",
+            "properties": {
+                "filename": {
+                    "type": "string",
+                    "description": "Base name only, for example 'patch.png'. Defaults to cst_3d_view.png.",
+                },
+            },
             "required": [],
         },
     ),
@@ -564,6 +596,15 @@ def _handle_impl(name: str, arguments: dict, client: CSTClient) -> list[TextCont
     # ------------------------------------------------------------------
     if name == "cst_connection_status":
         return _text(client.status())
+
+    if name == "cst_get_units":
+        return _text(client.get_project_units())
+
+    if name == "cst_capture_3d_view":
+        filename = arguments.get("filename")
+        if filename is not None and not isinstance(filename, str):
+            return _text({"status": "error", "message": "filename must be a string."})
+        return _text(client.capture_3d_view(filename))
 
     # ------------------------------------------------------------------
     # Unknown tool

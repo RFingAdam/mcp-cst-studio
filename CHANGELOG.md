@@ -8,6 +8,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- `cst_get_units` reads length and frequency. Offline mode does not assume millimeters.
+- `cst_capture_3d_view` writes a PNG under `CST_WORK_DIR` and does not add a history entry.
+- `cst_sample_field` samples E/H at explicit points, with optional SAR and a Poynting vector when both fields are present.
+- `cst_export_field_hdf5` writes one 3D monitor to HDF5 (`mesh` or `grid`) and returns the path, not the volume.
 - `cst_run_simulation_async` starts `model3d.run_solver()` on a background thread in connected mode and returns immediately.
 - `cst_get_simulation_status` polls the solver and the log tail. It no longer injects a VBA `MsgBox`.
 - `cst_get_result_curve` returns a decimated numeric curve plus a reflection summary (resonance, bandwidth, Zin, verdict).

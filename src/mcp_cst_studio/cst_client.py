@@ -10,7 +10,9 @@ from typing import Any
 
 from mcp_cst_studio.config import CSTConfig
 from mcp_cst_studio.dialog_handler import DialogWatcher, dismiss_cst_dialogs, find_cst_dialogs
+from mcp_cst_studio.rf_fields import parse_complex_vectors, peak_sample
 from mcp_cst_studio.rf_metrics import extract_curve, summarize_reflection
+from mcp_cst_studio.validators import ValidationError, validate_file_path
 
 logger = logging.getLogger(__name__)
 
@@ -649,6 +651,229 @@ class CSTClient:
             "verdict": (curve.get("summary") or {}).get("verdict"),
         }
 
+    def get_project_units(self) -> dict:
+        """Read length and frequency units. Never assume millimeters."""
+        if not self.connected or self._project is None:
+            return {
+                "status": "offline",
+                "length": None,
+                "frequency": None,
+                "message": (
+                    "Units are unknown offline. Do not assume millimeters or GHz. "
+                    "Geometry tools do not convert units."
+                ),
+            }
+        parsed = _parse_units(getattr(self._project.model3d, "units", None))
+        if parsed:
+            return {"status": "ok", "source": "model3d.units", **parsed}
+        try:
+            import cst.units as cst_units  # type: ignore[import-not-found]
+        except ImportError:
+            cst_units = None
+        if cst_units is not None:
+            parsed = _parse_units(cst_units)
+            if parsed:
+                return {"status": "ok", "source": "cst.units", **parsed}
+        return {
+            "status": "error",
+            "length": None,
+            "frequency": None,
+            "message": "Could not read project units.",
+            "looked_for": ["model3d.units", "cst.units"],
+        }
+
+    def capture_3d_view(self, filename: str | None = None) -> dict:
+        """Write a 3D view image under the work directory. No history entry.
+
+        The image bytes are not returned. Success requires a non-empty file.
+        """
+        if not self.connected or self._project is None:
+            return {
+                "status": "offline",
+                "message": (
+                    "3D view capture requires connected mode. "
+                    "Looked-for writers: model3d.export_image, ExportImage, "
+                    "save_image, SaveImage, export_screenshot, and the same "
+                    "names on model3d.plot."
+                ),
+                "looked_for": _VIEW_WRITER_NAMES,
+            }
+        try:
+            path = _work_file(self._config.work_dir, filename, ".png", "cst_3d_view.png")
+        except (ValidationError, ValueError) as exc:
+            return {"status": "error", "message": str(exc)}
+
+        m3d = self._project.model3d
+        looked: list[str] = []
+        writers: list[Any] = []
+        writers.extend(_collect_callables(m3d, _VIEW_METHOD_NAMES, "model3d", looked))
+        plot = getattr(m3d, "plot", None)
+        if plot is not None:
+            writers.extend(_collect_callables(plot, _VIEW_METHOD_NAMES, "model3d.plot", looked))
+        last_error = None
+        for writer in writers:
+            try:
+                writer(path)
+            except TypeError:
+                try:
+                    writer(filename=path)
+                except Exception as exc:
+                    last_error = str(exc)
+                    continue
+            except Exception as exc:
+                last_error = str(exc)
+                continue
+            if os.path.isfile(path) and os.path.getsize(path) > 0:
+                return {
+                    "status": "ok",
+                    "path": path,
+                    "bytes": os.path.getsize(path),
+                }
+        return {
+            "status": "error",
+            "message": "3D view export did not write a non-empty file.",
+            "looked_for": looked,
+            "path": path,
+            "last_error": last_error,
+        }
+
+    def sample_vector_field(
+        self,
+        tree_path: str,
+        points: list[list[float]],
+        max_points: int = 200,
+    ) -> dict:
+        """Sample a 3D vector monitor at explicit points. Does not return a volume."""
+        if len(points) > max_points:
+            return {
+                "status": "error",
+                "message": f"{len(points)} points exceeds the cap of {max_points}.",
+            }
+        if not self.connected or self._project is None:
+            return {
+                "status": "offline",
+                "message": "Vector field sampling requires connected mode.",
+                "call": [
+                    "vector_plot_3d.reset()",
+                    "vector_plot_3d.set_points([[x, y, z], ...])",
+                    "vector_plot_3d.calculate_list(tree_path)",
+                    "vector_plot_3d.get_list()  # Re/Im of the three components",
+                ],
+                "tree_path": tree_path,
+                "n_points": len(points),
+            }
+        plot, looked = _lookup_named(
+            self._project.model3d,
+            ("vector_plot_3d", "VectorPlot3D", "get_vector_plot_3d"),
+        )
+        if plot is None:
+            return {
+                "status": "error",
+                "message": "model3d has no 3D vector plot.",
+                "looked_for": looked,
+            }
+        try:
+            reset = getattr(plot, "reset", None) or getattr(plot, "Reset", None)
+            if callable(reset):
+                reset()
+            setter = getattr(plot, "set_points", None) or getattr(plot, "SetPoints", None)
+            if not callable(setter):
+                return {"status": "error", "message": "Vector plot has no set_points."}
+            setter(points)
+            calculate = getattr(plot, "calculate_list", None) or getattr(
+                plot, "CalculateList", None
+            )
+            if not callable(calculate):
+                return {"status": "error", "message": "Vector plot has no calculate_list."}
+            calculate(tree_path)
+            getter = getattr(plot, "get_list", None) or getattr(plot, "GetList", None)
+            if not callable(getter):
+                return {"status": "error", "message": "Vector plot has no get_list."}
+            raw = getter()
+            samples = parse_complex_vectors(raw, n_components=3)
+        except Exception as exc:
+            return {"status": "error", "message": str(exc), "tree_path": tree_path}
+        return {
+            "status": "ok",
+            "tree_path": tree_path,
+            "n": len(samples),
+            "samples": samples,
+            "peak": peak_sample(samples),
+        }
+
+    def export_monitor_hdf5(
+        self,
+        tree_path: str,
+        mode: str,
+        filename: str | None = None,
+    ) -> dict:
+        """Ask CST to write one 3D monitor to HDF5. The volume is not returned."""
+        if mode not in ("mesh", "grid"):
+            return {"status": "error", "message": "mode must be 'mesh' or 'grid'."}
+        if not self.connected or self._project is None:
+            return {
+                "status": "offline",
+                "message": "HDF5 monitor export requires connected mode.",
+                "call": [
+                    "result_3d.export_hdf5(path, mode)",
+                    "mode is 'mesh' (native mesh) or 'grid' (uniform grid)",
+                ],
+                "tree_path": tree_path,
+                "mode": mode,
+            }
+        result_3d, looked = _lookup_named(
+            self._project.model3d,
+            ("result_3d", "Result3D", "get_result_3d"),
+        )
+        if result_3d is None:
+            return {
+                "status": "error",
+                "message": "model3d has no Result3D exporter.",
+                "looked_for": looked,
+            }
+        try:
+            path = _work_file(
+                self._config.work_dir,
+                filename,
+                ".h5",
+                "cst_monitor.h5",
+            )
+        except (ValidationError, ValueError) as exc:
+            return {"status": "error", "message": str(exc)}
+        exporter = (
+            getattr(result_3d, "export_hdf5", None)
+            or getattr(result_3d, "ExportHDF5", None)
+            or getattr(result_3d, "export_to_hdf5", None)
+        )
+        if not callable(exporter):
+            return {
+                "status": "error",
+                "message": "Result3D has no export_hdf5.",
+                "looked_for": ["export_hdf5", "ExportHDF5", "export_to_hdf5"],
+            }
+        try:
+            try:
+                exporter(path, mode, tree_path)
+            except TypeError:
+                exporter(path, mode)
+        except Exception as exc:
+            return {"status": "error", "message": str(exc), "path": path}
+        if not os.path.isfile(path) or os.path.getsize(path) == 0:
+            return {
+                "status": "error",
+                "message": "HDF5 export did not write a non-empty file.",
+                "path": path,
+                "tree_path": tree_path,
+                "mode": mode,
+            }
+        return {
+            "status": "ok",
+            "path": path,
+            "bytes": os.path.getsize(path),
+            "tree_path": tree_path,
+            "mode": mode,
+        }
+
     def export_result(self, tree_path: str, filepath: str) -> dict:
         """Export a result tree item to CSV via Python API (no history entry).
 
@@ -966,4 +1191,105 @@ def _lookup_farfield_calculator(model3d: Any) -> Any | None:
         except Exception:
             return None
     return None
+
+
+_VIEW_METHOD_NAMES = (
+    "export_image",
+    "ExportImage",
+    "save_image",
+    "SaveImage",
+    "export_screenshot",
+)
+_VIEW_WRITER_NAMES = [f"model3d.{name}" for name in _VIEW_METHOD_NAMES] + [
+    f"model3d.plot.{name}" for name in _VIEW_METHOD_NAMES
+]
+
+
+def _parse_units(raw: Any) -> dict[str, str | None] | None:
+    if raw is None or isinstance(raw, (str, bytes, int, float)):
+        return None
+    if isinstance(raw, dict):
+        length = _as_unit_text(raw.get("length") or raw.get("geometry") or raw.get("Length"))
+        frequency = _as_unit_text(raw.get("frequency") or raw.get("Frequency"))
+        if length or frequency:
+            return {"length": length, "frequency": frequency}
+        return None
+    length = _unit_attr(raw, ("geometry", "length", "Geometry", "Length"))
+    frequency = _unit_attr(raw, ("frequency", "Frequency"))
+    if length is None and frequency is None:
+        getter = (
+            getattr(raw, "get_unit", None)
+            or getattr(raw, "GetUnit", None)
+            or getattr(raw, "get", None)
+        )
+        if callable(getter):
+            length = _call_unit(getter, ("length", "Length", "geometry", "Geometry"))
+            frequency = _call_unit(getter, ("frequency", "Frequency"))
+    if length or frequency:
+        return {"length": length, "frequency": frequency}
+    return None
+
+
+def _unit_attr(raw: Any, names: tuple[str, ...]) -> str | None:
+    for name in names:
+        text = _as_unit_text(getattr(raw, name, None))
+        if text:
+            return text
+    return None
+
+
+def _call_unit(getter: Any, names: tuple[str, ...]) -> str | None:
+    for name in names:
+        try:
+            text = _as_unit_text(getter(name))
+        except Exception:
+            continue
+        if text:
+            return text
+    return None
+
+
+def _as_unit_text(value: Any) -> str | None:
+    if isinstance(value, str) and value.strip():
+        return value.strip()
+    return None
+
+
+def _work_file(work_dir: str, filename: str | None, suffix: str, default_name: str) -> str:
+    if not work_dir:
+        raise ValueError("CST_WORK_DIR is not set, so the file has nowhere safe to go.")
+    name = filename or default_name
+    if name != os.path.basename(name.replace("\\", "/")):
+        raise ValueError("filename must be a base name, not a path")
+    if ".." in name:
+        raise ValueError("Path traversal ('..') is not allowed")
+    if not name.lower().endswith(suffix):
+        name += suffix
+    path = os.path.join(work_dir, name)
+    return validate_file_path(path, work_dir)
+
+
+def _collect_callables(obj: Any, names: tuple[str, ...], prefix: str, looked: list[str]) -> list[Any]:
+    found: list[Any] = []
+    for name in names:
+        looked.append(f"{prefix}.{name}")
+        fn = getattr(obj, name, None)
+        if callable(fn):
+            found.append(fn)
+    return found
+
+
+def _lookup_named(model3d: Any, names: tuple[str, ...]) -> tuple[Any | None, list[str]]:
+    looked = [f"model3d.{name}" for name in names]
+    for name in names:
+        obj = getattr(model3d, name, None)
+        if obj is None:
+            continue
+        if name.startswith("get_") and callable(obj):
+            try:
+                return obj(), looked
+            except Exception:
+                continue
+        return obj, looked
+    return None, looked
 

@@ -210,6 +210,24 @@ Test 7.2b: Non-blocking run
   Expected: returns immediately with status started. Then cst_get_simulation_status
   returns solver.status running or completed and does not open a MsgBox.
 
+Test 7.2c: Units and a picture before the solve
+  Tool: cst_get_units
+  Args: {}
+  Expected: length and frequency are the project units (not a guessed "mm")
+  Tool: cst_create_brick
+  Args: a brick in those length units
+  Tool: cst_capture_3d_view
+  Args: {"filename": "before_solve.png"}
+  Expected: status ok, path under CST_WORK_DIR, bytes > 0, no new history entry
+  Then run Test 7.2.
+
+Test 7.2d: Point field and HDF5
+  Requires an E-field monitor (and an H-field monitor for Poynting) calculated
+  by the solve. cst_sample_field points are [x, y, z] in project units.
+  Expected: Re/Im components and a peak magnitude. cst_export_field_hdf5 with
+  mode "mesh" or "grid" writes a non-empty .h5 and does not return the volume.
+  If the calculator attribute is missing, the error names vector_plot_3d or Result3D.
+
 Test 7.3: Get S-parameters
   Tool: cst_get_s_parameters
   Expected: Returns S11 data with frequency/magnitude arrays

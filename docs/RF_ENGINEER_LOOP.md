@@ -6,9 +6,16 @@ then change one parameter.
 
 ## 0. Units
 
-Read the project unit before any dimension. CST curves come back in that unit.
-A 2.4 that is GHz and a 2.4e9 that is Hz are both valid. `unit_guess` on a
-curve is a hint, not a conversion.
+Call `cst_get_units` before the first brick. Geometry tools do not convert
+units. If the call is offline, length is unknown: do not assume millimeters.
+CST curves come back in the project frequency unit. A 2.4 that is GHz and a
+2.4e9 that is Hz are both valid. `unit_guess` on a curve is a hint, not a
+conversion.
+
+After the geometry exists and before the first solve, call
+`cst_capture_3d_view`. Check that the PNG path exists and the byte count is
+non-zero. The image is not inlined in the tool response. A Boolean that
+deleted the radiator shows up here, not in the S-parameters.
 
 ## 1. Build
 
@@ -68,6 +75,13 @@ After the match is acceptable, `cst_farfield_sample` takes a theta cut
 (default phi = 0, 5 degree steps) through the farfield calculator. Radius is
 in meters. The response includes the cut and the peak. Do not request a full
 sphere through MCP.
+
+For a near field, add the monitor before the solve (`cst_add_field_monitor`),
+then `cst_sample_field` at a short point list. Pass `conductivity` only when
+you know it; SAR is `0.5 * sigma * |E|^2` and density is not applied. Pass
+both the E and H tree paths to get `0.5 * Re(E × H*)`. A whole monitor goes
+to disk with `cst_export_field_hdf5` (`mesh` or `grid`). Do not pull the
+volume back through MCP.
 
 ## 6. Hand off
 
