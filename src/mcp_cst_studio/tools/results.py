@@ -1,6 +1,6 @@
 """Result extraction tools for CST Studio MCP server.
 
-Provides 22 tools for extracting and exporting simulation results including
+Provides tools for extracting and exporting simulation results including
 S-parameters, far-field patterns, impedance, VSWR, gain, efficiency,
 general result tree navigation, and advanced results such as group delay,
 pattern cuts, cross-polarization, axial ratio, surface/volume currents,
@@ -685,6 +685,101 @@ TOOLS: list[Tool] = [
             "required": ["frequency"],
         },
     ),
+    Tool(
+        name="cst_get_result_curve",
+        description=(
+            "Read one 1D result-tree item as numeric samples. Returns a "
+            "decimated {x, y_re, y_im} curve and, for S-parameters and VSWR, "
+            "a summary with resonance, minimum return loss, bandwidth, and a "
+            "short verdict. Pass run_id to select a parametric run. This is "
+            "the tool to use when the result path is not a built-in S/Z/farfield helper."
+        ),
+        input_schema={
+            "type": "object",
+            "properties": {
+                "tree_path": {
+                    "type": "string",
+                    "description": "Result tree path, backslash-separated, copied from CST.",
+                },
+                "run_id": {
+                    "type": ["string", "integer"],
+                    "description": "Parametric run id. Omit for the latest or only run.",
+                },
+                "max_points": {
+                    "type": "integer",
+                    "description": "Maximum samples returned. Default 201. Endpoints are kept.",
+                    "default": 201,
+                },
+                "f0": {
+                    "type": "number",
+                    "description": (
+                        "Optional target frequency in the same unit as the curve x-axis. "
+                        "Used only to phrase the resonance verdict."
+                    ),
+                },
+            },
+            "required": ["tree_path"],
+        },
+    ),
+    Tool(
+        name="cst_farfield_sample",
+        description=(
+            "Sample realized gain (or another farfield quantity) on a theta cut "
+            "using the CST Python farfield calculator: reset, add evaluation "
+            "points, calculate_list, get_list. Radius is meters. Angles are "
+            "degrees. Requires a calculated farfield source. Does not dump a "
+            "full 3D sphere through MCP."
+        ),
+        input_schema={
+            "type": "object",
+            "properties": {
+                "frequency_ghz": {
+                    "type": "number",
+                    "description": "Frequency in GHz. Converted to Hz for the calculator.",
+                },
+                "phi_deg": {
+                    "type": "number",
+                    "description": "Fixed azimuth for the cut, degrees. Default 0.",
+                    "default": 0,
+                },
+                "theta_start_deg": {
+                    "type": "number",
+                    "description": "First polar angle, degrees. Default -180.",
+                    "default": -180,
+                },
+                "theta_stop_deg": {
+                    "type": "number",
+                    "description": "Last polar angle, degrees. Default 180.",
+                    "default": 180,
+                },
+                "theta_step_deg": {
+                    "type": "number",
+                    "description": "Polar step, degrees. Default 5. Kept coarse so the payload stays small.",
+                    "default": 5,
+                },
+                "quantity": {
+                    "type": "string",
+                    "description": "Farfield quantity, e.g. 'realized gain', 'directivity', 'axial ratio'.",
+                    "default": "realized gain",
+                },
+                "component": {
+                    "type": "string",
+                    "description": "Field component passed to get_list, e.g. 'Abs'.",
+                    "default": "Abs",
+                },
+                "radius_m": {
+                    "type": "number",
+                    "description": "Evaluation radius in meters. Required by CST even for gain. Default 1.",
+                    "default": 1,
+                },
+                "tree_path": {
+                    "type": "string",
+                    "description": "Optional farfield source path in the result tree.",
+                },
+            },
+            "required": ["frequency_ghz"],
+        },
+    ),
 ]
 
 
@@ -695,6 +790,23 @@ TOOLS: list[Tool] = [
 def _text(data: dict) -> list[TextContent]:
     """Wrap a dict as a single JSON TextContent response."""
     return [TextContent(type="text", text=json.dumps(data, indent=2))]
+
+
+def _theta_cut(start: float, stop: float, step: float) -> list[float]:
+    """Inclusive theta sweep. Float steps are rounded to 6 decimals."""
+    values: list[float] = []
+    cursor = start
+    # Guard against a step that never reaches stop.
+    for _ in range(722):
+        values.append(round(cursor, 6))
+        if cursor >= stop - 1e-9:
+            break
+        cursor += step
+    else:
+        values.append(round(stop, 6))
+    if values[-1] < stop - 1e-6:
+        values.append(round(stop, 6))
+    return values
 
 
 def _s_param_tree_path(port_out: int, port_in: int) -> str:
@@ -2266,10 +2378,9 @@ async def _handle_impl(name: str, arguments: dict, client: CSTClient) -> list[Te
         tree_path = arguments.get("tree_path")  # type: ignore[assignment]
 
         if client.connected:
-            vba = _build_list_results_vba(tree_path)
-            result = client.execute_vba(vba)
-            result["tree_path"] = tree_path or "(all result categories)"
-            return _text(result)
+            listed = client.list_result_tree(tree_path)
+            listed["tree_path"] = tree_path or "(all result categories)"
+            return _text(listed)
 
         # Offline: return the default result tree structure
         lookup_key = tree_path or ""
@@ -3065,6 +3176,71 @@ async def _handle_impl(name: str, arguments: dict, client: CSTClient) -> list[Te
                 "a text file."
             ),
         })
+
+    # ------------------------------------------------------------------
+    # cst_get_result_curve
+    # ------------------------------------------------------------------
+    if name == "cst_get_result_curve":
+        tree_path = arguments["tree_path"]
+        run_id = arguments.get("run_id")
+        max_points = int(arguments.get("max_points", 201))
+        f0 = arguments.get("f0")
+        if max_points < 2 or max_points > 5000:
+            return _text({
+                "status": "error",
+                "message": "max_points must be between 2 and 5000.",
+            })
+        if client.connected:
+            return _text(client.get_result(
+                tree_path, run_id=run_id, max_points=max_points, f0=f0
+            ))
+        return _text({
+            "status": "offline",
+            "tree_path": tree_path,
+            "run_id": run_id,
+            "message": (
+                "Numeric curves require connected mode and cst.results. "
+                "Open the project with allow_interactive=True if CST already "
+                "has it open, then get_tree_item(path, run_id).get_xdata() / "
+                "get_ydata(), or result_tree get_array('x'), get_array('y'), "
+                "get_array('yim')."
+            ),
+        })
+
+    # ------------------------------------------------------------------
+    # cst_farfield_sample
+    # ------------------------------------------------------------------
+    if name == "cst_farfield_sample":
+        frequency_ghz = arguments["frequency_ghz"]
+        validate_frequency(frequency_ghz)
+        phi = float(arguments.get("phi_deg", 0))
+        theta_start = float(arguments.get("theta_start_deg", -180))
+        theta_stop = float(arguments.get("theta_stop_deg", 180))
+        theta_step = float(arguments.get("theta_step_deg", 5))
+        if theta_step <= 0:
+            return _text({"status": "error", "message": "theta_step_deg must be > 0."})
+        theta = _theta_cut(theta_start, theta_stop, theta_step)
+        if len(theta) > 721:
+            return _text({
+                "status": "error",
+                "message": (
+                    f"Cut has {len(theta)} points. Raise theta_step_deg so it "
+                    "stays at or below 721."
+                ),
+            })
+        phi_list = [phi] * len(theta)
+        result = client.sample_farfield(
+            frequency_hz=float(frequency_ghz) * 1e9,
+            theta_deg=theta,
+            phi_deg=phi_list,
+            quantity=str(arguments.get("quantity", "realized gain")),
+            component=str(arguments.get("component", "Abs")),
+            radius_m=float(arguments.get("radius_m", 1.0)),
+            tree_path=arguments.get("tree_path"),
+        )
+        result["frequency_ghz"] = frequency_ghz
+        result["phi_deg"] = phi
+        return _text(result)
 
     # ------------------------------------------------------------------
     # Unknown tool

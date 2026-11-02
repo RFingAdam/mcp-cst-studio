@@ -575,7 +575,7 @@ Tool: cst_configure_time_domain_solver
 Args: {"accuracy": -30}
 
 Tool: cst_run_simulation
-Args: {"solver_type": "time_domain"}
+Args: {"solver_type": "Time Domain"}
 PASS if: simulation starts and completes
 ```
 
@@ -583,14 +583,14 @@ PASS if: simulation starts and completes
 ```
 Tool: cst_get_simulation_status
 Args: {}
-PASS if: returns status (running/completed)
+PASS if: solver.status is running or completed, and the response contains no MsgBox
 ```
 
 ### Test 10.3: Run Async Simulation
 ```
 Tool: cst_run_simulation_async
-Args: {"solver_type": "time_domain"}
-PASS if: simulation starts asynchronously
+Args: {}
+PASS if: returns immediately with status "started" (connected) and the MCP session is not blocked
 ```
 
 ### Test 10.4: Pause Simulation

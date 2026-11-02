@@ -219,6 +219,40 @@ TOOLS: list[Tool] = [
             "required": ["parameters", "bands"],
         },
     ),
+    Tool(
+        name="cst_tune_step",
+        description=(
+            "Run one antenna tuning iteration and return a verdict. "
+            "Connected mode stores parameters, deletes cached results, rebuilds, "
+            "runs the solver, then reads S-parameters as numbers "
+            "(resonance, return loss, Zin, and whether to lengthen or shorten). "
+            "Blocking: the call waits for that single solve. Does not loop. "
+            "Offline mode returns the sequence without touching CST."
+        ),
+        input_schema={
+            "type": "object",
+            "properties": {
+                "parameters": {
+                    "type": "object",
+                    "description": "Parameter name to new numeric value, e.g. {\"patch_length\": 28.4}.",
+                    "additionalProperties": {"type": "number"},
+                },
+                "port": {
+                    "type": "integer",
+                    "description": "Reflection port. Default 1.",
+                    "default": 1,
+                },
+                "f0_ghz": {
+                    "type": "number",
+                    "description": (
+                        "Target frequency in the same unit the S-parameter x-axis uses "
+                        "(often GHz). Used only for the lengthen/shorten verdict."
+                    ),
+                },
+            },
+            "required": ["parameters"],
+        },
+    ),
 ]
 
 _TOOL_NAMES = {t.name for t in TOOLS}
@@ -1446,10 +1480,49 @@ def _build_impedance_vba(port: int) -> str:
 # Dispatch
 # ---------------------------------------------------------------------------
 
+async def _handle_tune_step(arguments: dict, client: CSTClient) -> dict:
+    """One blocking solve-and-judge step. No search loop."""
+    raw = arguments.get("parameters")
+    if not isinstance(raw, dict) or not raw:
+        return {
+            "status": "error",
+            "message": "parameters must be a non-empty object of name to number.",
+        }
+    params: dict[str, float] = {}
+    for name, value in raw.items():
+        try:
+            params[str(name)] = float(value)
+        except (TypeError, ValueError) as exc:
+            return {"status": "error", "message": f"Bad value for {name}: {exc}"}
+    port = int(arguments.get("port", 1))
+    f0 = arguments.get("f0_ghz")
+    f0_value = float(f0) if f0 is not None else None
+    if not client.connected:
+        return {
+            "status": "offline",
+            "parameters": params,
+            "port": port,
+            "f0_ghz": f0_value,
+            "sequence": [
+                "StoreParameter",
+                "DeleteResults",
+                "Rebuild",
+                "run_solver",
+                "cst.results reflection curve",
+            ],
+            "message": (
+                "Tune step needs a live CST session. Do not retune from cached "
+                "results: DeleteResults before Rebuild or the solver repeats the last run."
+            ),
+        }
+    return client.tune_step(params, port=port, f0=f0_value)
+
+
 _HANDLERS: dict[str, Callable[..., Any]] = {
     "cst_evaluate_antenna": _handle_evaluate,
     "cst_analyze_impedance": _handle_analyze_impedance,
     "cst_refine_antenna": _handle_refine,
+    "cst_tune_step": _handle_tune_step,
 }
 
 

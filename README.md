@@ -10,7 +10,7 @@ A Model Context Protocol (MCP) server providing AI-driven access to [CST Studio 
 
 ## Features
 
-- **170 tools** across 20 categories: geometry, materials, ports, boundaries, mesh, solvers, simulation, results, parameters, antenna templates, arrays, matching networks, diagnostics, optimization, PCB, and more
+- **173 tools** across 20 categories: geometry, materials, ports, boundaries, mesh, solvers, simulation, results, parameters, antenna templates, arrays, matching networks, diagnostics, optimization, PCB, and more
 - **Dual-mode operation**: Connected mode (direct CST execution on Windows) and Offline mode (VBA script generation on any OS)
 - **13 parametric antenna templates**: Patch, dipole, monopole, horn, Yagi, helix, Vivaldi, slot, IFA, PIFA, spiral, bowtie: with automatic dimension calculations from target frequency
 - **PCB/SI tools**: Stackup creation, trace routing with impedance calculation, via modeling, ground planes
@@ -86,7 +86,7 @@ When the CST Python library is available, tools execute directly:
 | Mesh | 8 | Mesh type, density, refinement, adaptive meshing, hex/tet controls |
 | Solvers | 8 | Time domain, frequency domain, eigenmode, integral equation, asymptotic |
 | Simulation | 6 | Run, status, pause, resume, stop simulations |
-| Results | 22 | S-parameters, far-field, near-field, impedance, VSWR, gain, efficiency, Smith chart |
+| Results | 24 | S-parameters, far-field cuts, near-field, impedance, VSWR, gain, efficiency, Smith chart, numeric curves |
 | Import/Export | 5 | CAD import/export, Touchstone, far-field export |
 | Parameters | 11 | Parametric design, sweeps, expressions, dependencies |
 | Antenna Templates | 13 | Parametric antenna designs with RF calculations |
@@ -94,7 +94,7 @@ When the CST Python library is available, tools execute directly:
 | Matching | 8 | L / Pi / T networks, Smith-chart matching, stub matching |
 | PCB | 12 | Stackup, traces, vias, ground planes, Gerber import, differential pairs |
 | Diagnostics | 5 | Connection status, model integrity, mesh quality, solver convergence |
-| Optimization | 3 | Goal-driven sweeps, genetic / gradient optimizers |
+| Optimization | 4 | Goal checks, impedance guidance, Nelder-Mead refine, one-step tune |
 | VBA | 3 | Raw VBA execution, help reference, object listing |
 
 ## Antenna Templates
@@ -119,8 +119,20 @@ To use with a live CST Studio installation:
 ### Prerequisites
 
 - Windows 10/11 with CST Studio Suite 2024+ installed
-- CST Python libraries on your Python path (typically `C:\Program Files\CST Studio Suite 20XX\LinuxAMD64\python_cst_libraries`)
-- Python 3.10+
+- CST's Python libraries linked into the interpreter that launches the MCP server
+- Python 3.12, matching the interpreter CST ships (see Help if a version allows another 3.x)
+
+The Windows library folder is `AMD64\python_cst_libraries` under the CST install
+(`C:\Program Files\CST Studio Suite 20XX\AMD64\python_cst_libraries`).
+`LinuxAMD64` is the Linux layout and will not import on Windows.
+
+Setting `PYTHONPATH` alone is not the supported link. CST Help →
+Automation and Scripting → Python gives a one-time command that registers
+that folder with your interpreter. Run it once, then confirm:
+
+```bat
+python -c "import cst.interface, cst.results; print('CST available')"
+```
 
 ### Setup
 
@@ -135,7 +147,7 @@ set CST_PATH=C:\Program Files\CST Studio Suite 2026
 set CST_WORK_DIR=C:\cst_projects
 
 # 3. Add CST Python libs to PYTHONPATH
-set PYTHONPATH=%CST_PATH%\LinuxAMD64\python_cst_libraries;%PYTHONPATH%
+set PYTHONPATH=%CST_PATH%\AMD64\python_cst_libraries;%PYTHONPATH%
 
 # 4. Verify
 python -c "import cst.interface; print('CST available')"
@@ -154,7 +166,7 @@ Add to your `.mcp.json` or Claude Desktop config:
       "env": {
         "CST_PATH": "C:\\Program Files\\CST Studio Suite 2026",
         "CST_WORK_DIR": "C:\\cst_projects",
-        "PYTHONPATH": "C:\\Program Files\\CST Studio Suite 2026\\LinuxAMD64\\python_cst_libraries"
+        "PYTHONPATH": "C:\\Program Files\\CST Studio Suite 2026\\AMD64\\python_cst_libraries"
       }
     }
   }
