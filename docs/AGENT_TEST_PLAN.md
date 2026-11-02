@@ -18,7 +18,7 @@ This is the complete test plan for validating all 107 tools in the MCP-CST-Studi
 
 ---
 
-## Phase 1: Connection & Project Management (8 tools)
+## Phase 1: Connection & Project Management (10 tools)
 
 ### Test 1.1: Connection Status
 ```
@@ -56,6 +56,20 @@ PASS if: status == "saved"
 Tool: cst_project_tree
 Args: {}
 PASS if: returns tree structure (Components, Materials, etc.)
+```
+
+### Test 1.6: Units
+```
+Tool: cst_get_units
+Args: {}
+PASS if: length and frequency match the project, and offline mode leaves length null
+```
+
+### Test 1.7: 3D view
+```
+Tool: cst_capture_3d_view
+Args: {"filename": "before_solve.png"}
+PASS if: file under CST_WORK_DIR is non-empty and the history list did not grow
 ```
 
 ### Test 1.6: Close Project

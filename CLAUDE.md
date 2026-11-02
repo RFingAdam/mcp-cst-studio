@@ -21,13 +21,13 @@
 | `tools/__init__.py` | ToolRegistry aggregator, register_all_tools() |
 | `data/` | JSON material databases, antenna templates, VBA reference |
 
-## Tool Categories (173 tools)
+## Tool Categories (177 tools)
 
 The README table is the catalog. This list is the module map.
 
 | Module | Tools | Description |
 |--------|-------|-------------|
-| project.py | 8 | Create, open, save, close, export, status |
+| project.py | 10 | Create, open, save, close, export, units, 3D view, status |
 | geometry.py | 13 | Brick, cylinder, sphere, cone, torus, extrude, loft, wire, polygon |
 | boolean.py | 4 | Add, subtract, intersect, insert |
 | transforms.py | 4 | Translate, rotate, mirror, scale |
@@ -37,7 +37,7 @@ The README table is the catalog. This list is the module map.
 | mesh.py | 5 | Mesh type, density, refinement, adaptive, info |
 | solvers.py | 5 | Time domain, frequency domain, eigenmode, integral equation, info |
 | simulation.py | 6 | Run (blocking VBA or native), run_async (background `run_solver`), status (no MsgBox), pause, resume, stop |
-| results.py | 24 | S-params, farfield, monitors, numeric curves, farfield calculator cut |
+| results.py | 26 | S-params, farfield, monitors, numeric curves, farfield cut, point fields, HDF5 |
 | parameters.py | 11 | Set, get, list, delete, sweep, optimizers |
 | optimization.py | 4 | Evaluate, impedance guidance, Nelder-Mead, one tune step |
 | import_export.py | 5 | CAD import/export, Touchstone, farfield |

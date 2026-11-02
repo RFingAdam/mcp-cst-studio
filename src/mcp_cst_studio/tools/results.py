@@ -16,6 +16,7 @@ from typing import TYPE_CHECKING
 from mcp.types import TextContent, Tool
 
 from mcp_cst_studio.cst_client import CSTClient
+from mcp_cst_studio.rf_fields import components_to_complex, poynting_vector, sar
 from mcp_cst_studio.types import FieldMonitorType
 from mcp_cst_studio.validators import validate_file_path, validate_frequency, validate_port_number
 from mcp_cst_studio.vba_builder import VBABuilder, VBAScript
@@ -780,6 +781,86 @@ TOOLS: list[Tool] = [
             "required": ["frequency_ghz"],
         },
     ),
+    Tool(
+        name="cst_sample_field",
+        description=(
+            "Sample a calculated E or H monitor at explicit points. Returns "
+            "Re/Im components, magnitude, the peak, and optional SAR "
+            "(0.5 * sigma * |E|^2) when conductivity is passed in. "
+            "If both an E path and an H path are given, each point also gets "
+            "the time-average Poynting vector 0.5 * Re(E × H*). "
+            "Point count is capped. This does not return the mesh volume."
+        ),
+        input_schema={
+            "type": "object",
+            "properties": {
+                "tree_path": {
+                    "type": "string",
+                    "description": "E-field monitor path, or the only monitor when quantity is H.",
+                },
+                "h_tree_path": {
+                    "type": "string",
+                    "description": "H-field monitor path. Required when quantity is 'both'.",
+                },
+                "quantity": {
+                    "type": "string",
+                    "enum": ["E", "H", "both"],
+                    "description": "Which monitors to sample. Default E.",
+                    "default": "E",
+                },
+                "points": {
+                    "type": "array",
+                    "description": "Sample locations in project length units. Each item is [x, y, z].",
+                    "items": {
+                        "type": "array",
+                        "items": {"type": "number"},
+                        "minItems": 3,
+                        "maxItems": 3,
+                    },
+                },
+                "max_points": {
+                    "type": "integer",
+                    "description": "Cap on the number of points. Default 200. Hard max 2000.",
+                    "default": 200,
+                },
+                "conductivity": {
+                    "type": "number",
+                    "description": (
+                        "Siemens per meter. When set, SAR = 0.5 * conductivity * |E|^2 "
+                        "is added. Omit it to skip SAR. Density is not applied."
+                    ),
+                },
+            },
+            "required": ["tree_path", "points"],
+        },
+    ),
+    Tool(
+        name="cst_export_field_hdf5",
+        description=(
+            "Export one calculated 3D monitor to an HDF5 file under CST_WORK_DIR. "
+            "mode 'mesh' keeps the solver mesh. mode 'grid' asks for a uniform grid. "
+            "The response is the file path and byte size, not the volume."
+        ),
+        input_schema={
+            "type": "object",
+            "properties": {
+                "tree_path": {
+                    "type": "string",
+                    "description": "3D monitor path in the result tree.",
+                },
+                "mode": {
+                    "type": "string",
+                    "enum": ["mesh", "grid"],
+                    "description": "mesh = native mesh, grid = uniform grid.",
+                },
+                "filename": {
+                    "type": "string",
+                    "description": "Base name only, for example 'efield.h5'.",
+                },
+            },
+            "required": ["tree_path", "mode"],
+        },
+    ),
 ]
 
 
@@ -807,6 +888,88 @@ def _theta_cut(start: float, stop: float, step: float) -> list[float]:
     if values[-1] < stop - 1e-6:
         values.append(round(stop, 6))
     return values
+
+
+def _sample_field(arguments: dict, client: CSTClient) -> dict:
+    quantity = arguments.get("quantity", "E")
+    if quantity not in ("E", "H", "both"):
+        return {"status": "error", "message": "quantity must be 'E', 'H', or 'both'."}
+    h_tree = arguments.get("h_tree_path")
+    if quantity == "both" and not h_tree:
+        return {"status": "error", "message": "h_tree_path is required when quantity is 'both'."}
+    if quantity == "H" and not arguments.get("tree_path") and not h_tree:
+        return {"status": "error", "message": "tree_path is required."}
+    try:
+        points = _coerce_points(arguments.get("points"))
+    except ValueError as exc:
+        return {"status": "error", "message": str(exc)}
+    max_points = int(arguments.get("max_points", 200))
+    if max_points < 1 or max_points > 2000:
+        return {"status": "error", "message": "max_points must be between 1 and 2000."}
+    if len(points) > max_points:
+        return {
+            "status": "error",
+            "message": f"{len(points)} points exceeds the cap of {max_points}.",
+        }
+    conductivity = arguments.get("conductivity")
+    if conductivity is not None:
+        try:
+            conductivity = float(conductivity)
+        except (TypeError, ValueError):
+            return {"status": "error", "message": "conductivity must be a number."}
+        if conductivity < 0:
+            return {"status": "error", "message": "conductivity must be >= 0."}
+
+    e_path = arguments["tree_path"]
+    if quantity == "H":
+        magnetic = client.sample_vector_field(h_tree or e_path, points, max_points=max_points)
+        magnetic["quantity"] = "H"
+        return magnetic
+
+    electric = client.sample_vector_field(e_path, points, max_points=max_points)
+    electric["quantity"] = "E"
+    if electric.get("status") != "ok":
+        return electric
+    if conductivity is not None:
+        for sample in electric["samples"]:
+            sample["sar"] = sar(float(sample["magnitude"]), conductivity)
+        electric["conductivity"] = conductivity
+        electric["sar_note"] = "SAR = 0.5 * conductivity * |E|^2. Mass density is not applied."
+    if quantity != "both":
+        return electric
+
+    magnetic = client.sample_vector_field(h_tree, points, max_points=max_points)
+    if magnetic.get("status") != "ok":
+        electric["h_field"] = magnetic
+        return electric
+    e_samples = electric["samples"]
+    h_samples = magnetic["samples"]
+    if len(e_samples) != len(h_samples):
+        electric["h_field"] = {"status": "error", "message": "E and H sample counts differ."}
+        return electric
+    for e_sample, h_sample in zip(e_samples, h_samples, strict=False):
+        e_sample["poynting"] = poynting_vector(
+            components_to_complex(e_sample),
+            components_to_complex(h_sample),
+        )
+    electric["h_peak"] = magnetic.get("peak")
+    electric["h_tree_path"] = h_tree
+    return electric
+
+
+def _coerce_points(raw: object) -> list[list[float]]:
+    if not isinstance(raw, list) or not raw:
+        raise ValueError("points must be a non-empty list of [x, y, z].")
+    points: list[list[float]] = []
+    for item in raw:
+        if not isinstance(item, (list, tuple)) or len(item) != 3:
+            raise ValueError("Each point must be [x, y, z].")
+        try:
+            coords = [float(item[0]), float(item[1]), float(item[2])]
+        except (TypeError, ValueError) as exc:
+            raise ValueError("Point coordinates must be numbers.") from exc
+        points.append(coords)
+    return points
 
 
 def _s_param_tree_path(port_out: int, port_in: int) -> str:
@@ -3241,6 +3404,26 @@ async def _handle_impl(name: str, arguments: dict, client: CSTClient) -> list[Te
         result["frequency_ghz"] = frequency_ghz
         result["phi_deg"] = phi
         return _text(result)
+
+    # ------------------------------------------------------------------
+    # cst_sample_field
+    # ------------------------------------------------------------------
+    if name == "cst_sample_field":
+        return _text(_sample_field(arguments, client))
+
+    # ------------------------------------------------------------------
+    # cst_export_field_hdf5
+    # ------------------------------------------------------------------
+    if name == "cst_export_field_hdf5":
+        mode = arguments.get("mode")
+        if mode not in ("mesh", "grid"):
+            return _text({"status": "error", "message": "mode must be 'mesh' or 'grid'."})
+        filename = arguments.get("filename")
+        if filename is not None and not isinstance(filename, str):
+            return _text({"status": "error", "message": "filename must be a string."})
+        return _text(client.export_monitor_hdf5(
+            arguments["tree_path"], mode, filename
+        ))
 
     # ------------------------------------------------------------------
     # Unknown tool

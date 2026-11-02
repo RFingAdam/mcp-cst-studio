@@ -10,7 +10,7 @@ A Model Context Protocol (MCP) server providing AI-driven access to [CST Studio 
 
 ## Features
 
-- **173 tools** across 20 categories: geometry, materials, ports, boundaries, mesh, solvers, simulation, results, parameters, antenna templates, arrays, matching networks, diagnostics, optimization, PCB, and more
+- **177 tools** across 20 categories: geometry, materials, ports, boundaries, mesh, solvers, simulation, results, parameters, antenna templates, arrays, matching networks, diagnostics, optimization, PCB, and more
 - **Dual-mode operation**: Connected mode (direct CST execution on Windows) and Offline mode (VBA script generation on any OS)
 - **13 parametric antenna templates**: Patch, dipole, monopole, horn, Yagi, helix, Vivaldi, slot, IFA, PIFA, spiral, bowtie: with automatic dimension calculations from target frequency
 - **PCB/SI tools**: Stackup creation, trace routing with impedance calculation, via modeling, ground planes
@@ -76,7 +76,7 @@ When the CST Python library is available, tools execute directly:
 
 | Category | Tools | Description |
 |----------|-------|-------------|
-| Project | 8 | Create, open, save, close, export projects |
+| Project | 10 | Create, open, save, close, export projects, units, 3D view |
 | Geometry | 13 | Brick, cylinder, sphere, cone, torus, extrude, loft, wire, polygon |
 | Boolean | 4 | Add, subtract, intersect, insert operations |
 | Transforms | 4 | Translate, rotate, mirror, scale |
@@ -86,7 +86,7 @@ When the CST Python library is available, tools execute directly:
 | Mesh | 8 | Mesh type, density, refinement, adaptive meshing, hex/tet controls |
 | Solvers | 8 | Time domain, frequency domain, eigenmode, integral equation, asymptotic |
 | Simulation | 6 | Run, status, pause, resume, stop simulations |
-| Results | 24 | S-parameters, far-field cuts, near-field, impedance, VSWR, gain, efficiency, Smith chart, numeric curves |
+| Results | 26 | S-parameters, far-field cuts, point field samples, HDF5 monitor export, impedance, VSWR, gain, efficiency, Smith chart, numeric curves |
 | Import/Export | 5 | CAD import/export, Touchstone, far-field export |
 | Parameters | 11 | Parametric design, sweeps, expressions, dependencies |
 | Antenna Templates | 13 | Parametric antenna designs with RF calculations |
