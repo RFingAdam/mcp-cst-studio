@@ -21,7 +21,7 @@
 | `tools/__init__.py` | ToolRegistry aggregator, register_all_tools() |
 | `data/` | JSON material databases, antenna templates, VBA reference |
 
-## Tool Categories (~107 tools)
+## Tool Categories (170 tools)
 
 | Module | Tools | Description |
 |--------|-------|-------------|

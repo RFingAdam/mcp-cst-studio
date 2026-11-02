@@ -30,3 +30,23 @@ Thumbs.db
 
 # security
 .ip-denylist
+
+# CST Studio project and results files
+*.cst
+*.cstd
+*.mph
+
+# Secrets and keys
+.env.*
+*.pem
+*.key
+
+# Local databases and editor files
+*.sqlite
+*.sqlite3
+.idea/
+.vscode/
+
+# Local agent notes and settings
+.claude/
+CLAUDE.local.md
