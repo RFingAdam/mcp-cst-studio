@@ -206,3 +206,14 @@ async def test_field_point_cap():
     data = json.loads(result[0].text)
     assert data["status"] == "error"
     assert "cap" in data["message"]
+
+
+def test_sample_field_h_only_without_tree_path_does_not_raise():
+    from mcp_cst_studio.tools.results import _sample_field
+
+    client = CSTClient(config=CSTConfig(connected=False))
+    result = _sample_field(
+        {"quantity": "H", "h_tree_path": "2D/3D Results\\H-Field\\h (f=1)", "points": [[0, 0, 0]]},
+        client,
+    )
+    assert "status" in result

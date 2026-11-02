@@ -920,13 +920,17 @@ def _sample_field(arguments: dict, client: CSTClient) -> dict:
         if conductivity < 0:
             return {"status": "error", "message": "conductivity must be >= 0."}
 
-    e_path = arguments["tree_path"]
+    e_path = arguments.get("tree_path")
     if quantity == "H":
-        magnetic = client.sample_vector_field(h_tree or e_path, points, max_points=max_points)
+        magnetic = client.sample_vector_field(
+            str(h_tree or e_path), points, max_points=max_points
+        )
         magnetic["quantity"] = "H"
         return magnetic
 
-    electric = client.sample_vector_field(e_path, points, max_points=max_points)
+    if not e_path:
+        return {"status": "error", "message": "tree_path is required for E samples."}
+    electric = client.sample_vector_field(str(e_path), points, max_points=max_points)
     electric["quantity"] = "E"
     if electric.get("status") != "ok":
         return electric
@@ -938,7 +942,7 @@ def _sample_field(arguments: dict, client: CSTClient) -> dict:
     if quantity != "both":
         return electric
 
-    magnetic = client.sample_vector_field(h_tree, points, max_points=max_points)
+    magnetic = client.sample_vector_field(str(h_tree), points, max_points=max_points)
     if magnetic.get("status") != "ok":
         electric["h_field"] = magnetic
         return electric
