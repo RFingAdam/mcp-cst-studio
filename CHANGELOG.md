@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.1]: 2026-11-03
+
 ### Added
 - `cst_run_simulation_async` starts `model3d.run_solver()` on a background thread in connected mode and returns immediately.
 - `cst_get_simulation_status` polls the solver and the log tail. It no longer injects a VBA `MsgBox`.
