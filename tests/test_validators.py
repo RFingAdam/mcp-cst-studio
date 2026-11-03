@@ -96,6 +96,34 @@ class TestValidateVBAInput:
         with pytest.raises(ValidationError):
             validate_vba_input("SHELL \"calc.exe\"")
 
+    def test_safe_line_continuation_allowed(self):
+        code = 'With Brick\n  .Name _\n  "box"\n  .Create\nEnd With'
+        assert validate_vba_input(code) == code
+
+    def test_line_continued_shell_blocked(self):
+        with pytest.raises(ValidationError, match="Shell"):
+            validate_vba_input('Shell _\n"cmd.exe"')
+
+    def test_line_continued_createobject_blocked(self):
+        with pytest.raises(ValidationError, match="CreateObject"):
+            validate_vba_input('Set obj = CreateObject _\n("WScript.Shell")')
+
+    def test_line_continued_open_for_blocked(self):
+        with pytest.raises(ValidationError, match="Open"):
+            validate_vba_input('Open _\n"file.txt" For Output As #1')
+
+    def test_line_continued_declare_blocked(self):
+        with pytest.raises(ValidationError, match="Declare"):
+            validate_vba_input('Declare _\nSub Sleep Lib "kernel32"')
+
+    def test_callbyname_blocked(self):
+        with pytest.raises(ValidationError, match="CallByName"):
+            validate_vba_input('CallByName obj, "Quit", VbMethod')
+
+    def test_line_continued_callbyname_blocked(self):
+        with pytest.raises(ValidationError, match="CallByName"):
+            validate_vba_input('CallByName _\nobj, "Quit", VbMethod')
+
 
 class TestValidateFilePath:
     def test_valid(self):
