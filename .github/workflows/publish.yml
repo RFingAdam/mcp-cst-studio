@@ -1,28 +1,86 @@
 name: Publish to PyPI
 
+# Push a v<version> tag on main to release. The tag must match the version in pyproject.toml.
+# PyPI trusted publisher: project mcp-cst-studio, workflow publish.yml, environment pypi.
 on:
-  release:
-    types: [published]
+  push:
+    tags:
+      - "v*"
+  # A change to the release path is proved here, up to the upload, before it can reach a tag.
+  pull_request:
+    paths:
+      - ".github/workflows/publish.yml"
+      - "pyproject.toml"
+  workflow_dispatch:
 
 permissions:
-  id-token: write
+  contents: read
 
 jobs:
   build:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
 
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: "3.12"
 
+      - name: Refuse a tag that is not on main
+        if: github.ref_type == 'tag'
+        run: git merge-base --is-ancestor "$GITHUB_SHA" origin/main
+
       - name: Install build tools
-        run: pip install build
+        run: pip install build twine
 
       - name: Build package
         run: python -m build
+
+      - name: Refuse a tag that does not match the package version
+        if: github.ref_type == 'tag'
+        run: |
+          test -f "dist/mcp_cst_studio-${GITHUB_REF_NAME#v}-py3-none-any.whl"
+          test -f "dist/mcp_cst_studio-${GITHUB_REF_NAME#v}.tar.gz"
+
+      - name: Check the package metadata
+        run: twine check --strict dist/*
+
+      - name: Install the wheel and load the server
+        run: |
+          python -m venv wheel-env
+          wheel-env/bin/pip install dist/*.whl
+          wheel-env/bin/python -c '
+          from importlib.metadata import distribution
+          commands = [e for e in distribution("mcp-cst-studio").entry_points if e.group == "console_scripts"]
+          assert [c.name for c in commands] == ["mcp-cst-studio"], commands
+          commands[0].load()
+          print("mcp-cst-studio entry point loaded")
+          '
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/
+          if-no-files-found: error
+
+  publish:
+    if: github.ref_type == 'tag'
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: pypi
+      url: https://pypi.org/project/mcp-cst-studio/
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist
 
       - name: Publish to PyPI
         uses: pypa/gh-action-pypi-publish@release/v1

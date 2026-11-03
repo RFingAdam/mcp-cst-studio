@@ -16,6 +16,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `cst_tune_step` runs one StoreParameter → DeleteResults → Rebuild → solve → S-parameter verdict.
 - `docs/RF_ENGINEER_LOOP.md` describes the agent design loop.
 
+### Changed
+- PyPI publishing runs when a `v<version>` tag on `main` is pushed, instead of on a published GitHub release. It refuses a tag that is not on `main` or does not match the package version, checks the metadata, loads the installed entry point, and publishes through trusted publishing from the `pypi` environment.
+
 ### Fixed
 - Windows setup docs pointed at `LinuxAMD64`. The library folder on Windows is `AMD64`, and the supported link is the one-time command in CST Help, not `PYTHONPATH` alone.
 - Connected-mode test docs used `solver_type="time_domain"` and `cst_configure_time_domain`. The tool enum value is `"Time Domain"` and the tool name is `cst_configure_time_domain_solver`.
