@@ -1,17 +1,19 @@
-"""Input validation and VBA injection prevention."""
+"""Input validation and VBA denylist checks."""
 
 from __future__ import annotations
 
 import enum
 import re
 
-# VBA commands that could be used for injection attacks
+# Regex denylist of VBA constructs that can escape CST automation.
+# This is not a sandbox: unknown or obfuscated calls may still pass.
 _DANGEROUS_VBA_PATTERNS = [
     r"\bShell\b",
     r"\bKill\b",
     r"\bFileCopy\b",
     r"\bCreateObject\b",
     r"\bGetObject\b",
+    r"\bCallByName\b",
     r"\bSendKeys\b",
     r"\bAppActivate\b",
     r"\bOpen\s+.*\s+For\s+(Input|Output|Append|Binary|Random)\b",
@@ -30,6 +32,9 @@ _DANGEROUS_VBA_PATTERNS = [
 ]
 
 _DANGEROUS_VBA_RE = re.compile("|".join(_DANGEROUS_VBA_PATTERNS), re.IGNORECASE)
+
+# VBA line continuation: token `_` at end of a line, optional indent on the next.
+_VBA_LINE_CONTINUATION_RE = re.compile(r"_[ \t]*\r?\n[ \t]*")
 
 _VALID_NAME_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_ .-]{0,99}$")
 
@@ -64,9 +69,18 @@ def validate_component_path(path: str) -> str:
     return path
 
 
+def _normalize_vba_continuations(vba_code: str) -> str:
+    """Join statements split with the VBA `_` line-continuation marker."""
+    return _VBA_LINE_CONTINUATION_RE.sub(" ", vba_code)
+
+
 def validate_vba_input(vba_code: str) -> str:
-    """Check VBA code for dangerous patterns."""
-    match = _DANGEROUS_VBA_RE.search(vba_code)
+    """Reject VBA that matches the dangerous-pattern denylist.
+
+    Line-continued statements are joined before matching so a split
+    ``Declare _`` / ``Sub`` (or similar) cannot bypass the denylist.
+    """
+    match = _DANGEROUS_VBA_RE.search(_normalize_vba_continuations(vba_code))
     if match:
         raise ValidationError(
             f"VBA code contains potentially dangerous pattern: '{match.group()}'. "

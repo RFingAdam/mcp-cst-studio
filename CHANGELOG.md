@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- README describes VBA validation as a denylist (not injection prevention or a sandbox) and documents security limitations.
+
+### Security
+- VBA denylist now rejects `CallByName` and line-continued (`_`) forms of denylisted calls.
+
 ## [0.2.1]: 2026-11-03
 
 ### Added

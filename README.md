@@ -15,7 +15,7 @@ A Model Context Protocol (MCP) server providing AI-driven access to [CST Studio 
 - **13 parametric antenna templates**: Patch, dipole, monopole, horn, Yagi, helix, Vivaldi, slot, IFA, PIFA, spiral, bowtie: with automatic dimension calculations from target frequency
 - **PCB/SI tools**: Stackup creation, trace routing with impedance calculation, via modeling, ground planes
 - **Material database**: 30+ metals, dielectrics, and RF substrates with accurate electromagnetic properties
-- **VBA injection prevention**: All generated VBA passes through security validation
+- **Denylist-validated VBA**: Generated and user-supplied VBA is checked against a regex denylist of dangerous patterns
 - **CST VBA reference**: Built-in help system for CST VBA objects and methods
 
 ## Installation
@@ -182,6 +182,12 @@ Once connected, verify with these prompts:
 3. **Antenna**: "Design a 2.4 GHz patch antenna on FR-4": should build full model
 4. **Simulation**: "Run a time-domain simulation": should start solver
 5. **Results**: "Show me the S-parameters": should extract S11 data
+
+## Security model / limitations
+
+VBA validation is a **denylist**, not a sandbox. `validate_vba_input()` rejects known-dangerous patterns (for example `Shell`, `CreateObject`, `CallByName`, file I/O, and `Declare` statements), including line-continued (`_`) forms. It does not constrain VBA to an allowlist of CST statement shapes, so unknown or obfuscated calls may still pass.
+
+Run CST Studio Suite with least privilege. Treat generated or user-supplied VBA as untrusted, and do not run the MCP server or CST under an account that can reach secrets or systems you would not want a script to touch.
 
 ## Development
 
