@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "mcp-cst-studio"
-version = "0.2.0"
+version = "0.2.1"
 description = "MCP server for CST Studio Suite: antenna design, RF simulation, and PCB layout"
 readme = "README.md"
 license = "AGPL-3.0-or-later"
