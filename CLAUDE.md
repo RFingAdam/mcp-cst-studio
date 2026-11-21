@@ -120,3 +120,16 @@ Environment variables:
 - `CST_PATH`: CST installation directory (auto-detected on Windows)
 - `CST_WORK_DIR`: Working directory for projects (default: ~/cst_projects)
 - `CST_VERSION`: CST version year (default: 2026)
+
+## MCP first (do not bypass with bash)
+
+If this MCP covers the job, use its tools. If a call fails, root-cause and fix this MCP (branch, test, PR), then retry through the MCP. Do not silently fall back to bash, vendor CLIs, or ad-hoc scripts.
+
+A temporary bypass is allowed only when you state it in your report and log it in `docs/KNOWN_ISSUES.md` (or the Known issues file linked below). Record the command family only — no secrets, hostnames, LAN IPs, or private paths.
+
+Plain bash is fine for local files, git, builds, and work this MCP does not cover.
+
+### Use the `cst-studio` MCP for
+
+- CST Studio Suite project, geometry, mesh, solver, and result jobs this MCP exposes
+- Generating or running CST VBA / the CST CLI when this MCP can do the job
